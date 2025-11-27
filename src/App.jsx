@@ -4,7 +4,7 @@ import { db } from './firebase';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy, setDoc } from 'firebase/firestore';
 
 import { 
-  LayoutDashboard, Wallet, ArrowRightLeft, PieChart as PieChartIcon, Settings, Search, Menu, X, Plus, Trash2, Edit2, Download, Upload, RefreshCw, TrendingUp, TrendingDown, AlertTriangle, Sparkles, Loader, DollarSign, Save, PiggyBank, ArrowDownToLine, ArrowUpFromLine, Lock, LogOut, KeyRound, ShieldCheck, Cloud, Wifi, WifiOff, Globe
+  LayoutDashboard, Wallet, ArrowRightLeft, PieChart as PieChartIcon, Settings, Search, Menu, X, Plus, Trash2, Edit2, Download, Upload, RefreshCw, TrendingUp, TrendingDown, AlertTriangle, Sparkles, Loader, DollarSign, Save, PiggyBank, ArrowDownToLine, ArrowUpFromLine, Lock, LogOut, KeyRound, ShieldCheck, Cloud, Wifi, WifiOff, Globe, Scale
 } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from 'recharts';
 
@@ -43,6 +43,10 @@ export default function App() {
   const [transactions, setTransactions] = useState([]);
   const [rates, setRates] = useState({ USD: 32.50, EUR: 35.20, GBP: 41.10, TRY: 1 });
   const [manualPrices, setManualPrices] = useState({});
+  // YENİ: Hedef Dağılım Oranları
+  const [targetAllocations, setTargetAllocations] = useState({
+    stock: 5, stock_us: 40, crypto: 5, gold: 40, forex: 0, fund: 0, cash: 10
+  });
 
   // --- UI STATE ---
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -84,12 +88,16 @@ export default function App() {
       setLoading(false); // Hata olsa bile loading'i kapat ki arayüz görünsün
     });
 
-    // 2. Ayarları (Kurlar, Fiyatlar, PIN) Dinle
+    // 2. Ayarları (Kurlar, Fiyatlar, PIN, Hedefler) Dinle
     const unsubRates = onSnapshot(doc(db, "settings", "rates"), (doc) => {
        if (doc.exists()) setRates(doc.data());
     });
     const unsubPrices = onSnapshot(doc(db, "settings", "prices"), (doc) => {
        if (doc.exists()) setManualPrices(doc.data());
+    });
+    // Hedefleri Dinle
+    const unsubTargets = onSnapshot(doc(db, "settings", "targets"), (doc) => {
+       if (doc.exists()) setTargetAllocations(doc.data());
     });
     const unsubSecurity = onSnapshot(doc(db, "settings", "security"), (doc) => {
        if (doc.exists()) {
@@ -103,7 +111,7 @@ export default function App() {
     return () => {
       window.removeEventListener('online', () => setIsOnline(true));
       window.removeEventListener('offline', () => setIsOnline(false));
-      unsubTx(); unsubRates(); unsubPrices(); unsubSecurity();
+      unsubTx(); unsubRates(); unsubPrices(); unsubSecurity(); unsubTargets();
     };
   }, []);
 
@@ -202,6 +210,39 @@ export default function App() {
       netContributionTRY: netContributionTRY || 0
     };
   }, [transactions, rates, manualPrices]);
+
+  // --- REBALANCE (DENGELEME) HESAPLAMASI ---
+  const rebalanceData = useMemo(() => {
+    const totalVal = calculatedData.totalValueTRY;
+    // Mevcut durum
+    const currentAllocation = {
+      stock: 0, stock_us: 0, crypto: 0, gold: 0, forex: 0, fund: 0, cash: 0
+    };
+    
+    calculatedData.holdings.forEach(h => {
+      if (currentAllocation[h.assetType] !== undefined) {
+        currentAllocation[h.assetType] += h.currentValueTRY;
+      }
+    });
+
+    // Hesapla
+    return ASSET_TYPES.map(type => {
+      const targetPct = targetAllocations[type.id] || 0;
+      const targetVal = totalVal * (targetPct / 100);
+      const currentVal = currentAllocation[type.id] || 0;
+      const diff = targetVal - currentVal; // Pozitifse AL, Negatifse SAT
+      const currentPct = totalVal > 0 ? (currentVal / totalVal) * 100 : 0;
+
+      return {
+        ...type,
+        targetPct,
+        currentPct,
+        targetVal,
+        currentVal,
+        diff
+      };
+    });
+  }, [calculatedData, targetAllocations]);
 
 
   // --- HANDLERS (Firebase Entegreli) ---
@@ -309,6 +350,16 @@ export default function App() {
     }
   };
 
+  // YENİ: Hedefleri Kaydet
+  const handleSaveTargets = async () => {
+     // Toplam 100 mü kontrolü
+     const total = Object.values(targetAllocations).reduce((a,b) => a+parseFloat(b||0), 0);
+     if (Math.abs(total - 100) > 0.1) { alert(`Dikkat: Toplam %${total}. %100 olmalı!`); return; }
+     
+     await setDoc(doc(db, "settings", "targets"), targetAllocations);
+     alert("Hedefler kaydedildi!");
+  };
+
   const handleOpenAddModal = () => { resetForm(); setIsTxModalOpen(true); };
   const handleOpenPriceModal = () => {
     const initialData = {};
@@ -364,6 +415,7 @@ export default function App() {
         <div className="p-6 border-b border-slate-100 dark:border-slate-700 flex justify-between items-center"><div className="flex items-center gap-2 font-bold text-xl text-blue-600"><Cloud size={24} /> <span>BulutPortföy</span></div><button className="md:hidden" onClick={() => setIsSidebarOpen(false)}><X size={20} /></button></div>
         <nav className="p-4 space-y-2">
           <button onClick={() => { setActiveTab('dashboard'); if(window.innerWidth < 768) setIsSidebarOpen(false); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'dashboard' ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600' : 'hover:bg-slate-100 dark:hover:bg-slate-700'}`}><PieChartIcon size={20} /> Genel Bakış</button>
+          <button onClick={()=>{setActiveTab('rebalance');if(window.innerWidth<768)setIsSidebarOpen(false)}} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab==='rebalance'?'bg-blue-50 text-blue-600 dark:bg-slate-700':'hover:bg-slate-100 dark:hover:bg-slate-700'}`}><Scale size={20}/> Dengeleme</button>
           <button onClick={() => { setActiveTab('holdings'); if(window.innerWidth < 768) setIsSidebarOpen(false); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'holdings' ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600' : 'hover:bg-slate-100 dark:hover:bg-slate-700'}`}><Wallet size={20} /> Varlıklarım</button>
           <button onClick={() => { setActiveTab('transactions'); if(window.innerWidth < 768) setIsSidebarOpen(false); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'transactions' ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600' : 'hover:bg-slate-100 dark:hover:bg-slate-700'}`}><ArrowRightLeft size={20} /> İşlem Geçmişi</button>
         </nav>
@@ -376,7 +428,7 @@ export default function App() {
 
       <main className="flex-1 overflow-auto">
         <header className="bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 p-4 sticky top-0 z-30 flex justify-between items-center shadow-sm">
-          <div className="flex items-center gap-4"><button onClick={() => setIsSidebarOpen(true)} className="md:hidden p-2 hover:bg-slate-100 rounded-lg"><Menu size={20} /></button><h1 className="text-xl font-bold capitalize hidden sm:block">{activeTab === 'dashboard' ? 'Dashboard' : activeTab === 'holdings' ? 'Varlık Listesi' : 'İşlem Geçmişi'}</h1></div>
+          <div className="flex items-center gap-4"><button onClick={() => setIsSidebarOpen(true)} className="md:hidden p-2 hover:bg-slate-100 rounded-lg"><Menu size={20} /></button><h1 className="text-xl font-bold capitalize hidden sm:block">{activeTab === 'rebalance' ? 'Yeniden Dengeleme' : activeTab}</h1></div>
           <div className="flex items-center gap-3">
              <div className="hidden lg:flex items-center gap-4 text-xs font-mono bg-slate-100 dark:bg-slate-900 px-3 py-1.5 rounded-md text-slate-500 mr-2"><span>USD: <span className="text-slate-900 dark:text-white font-bold">{rates.USD}</span></span><span>EUR: <span className="text-slate-900 dark:text-white font-bold">{rates.EUR}</span></span></div>
              <button onClick={handleOpenPriceModal} className="hidden md:flex items-center gap-2 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 px-3 py-2 rounded-lg text-sm font-medium"><RefreshCw size={16} /> <span className="hidden lg:inline">Fiyatlar</span></button>
@@ -417,6 +469,81 @@ export default function App() {
                 <div className="lg:col-span-2 bg-white dark:bg-slate-800 p-6 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden flex flex-col"><h3 className="font-bold text-lg mb-4">Portföy Liderleri</h3><div className="overflow-x-auto"><table className="w-full text-sm text-left"><thead className="text-xs text-slate-500 uppercase bg-slate-50 dark:bg-slate-700/50"><tr><th className="px-4 py-3">Varlık</th><th className="px-4 py-3 text-right">Adet</th><th className="px-4 py-3 text-right">Değer (TL)</th><th className="px-4 py-3 text-right">Kâr/Zarar %</th></tr></thead><tbody className="divide-y divide-slate-100 dark:divide-slate-700">{calculatedData.holdings.sort((a,b) => b.currentValueTRY - a.currentValueTRY).slice(0, 5).map((h, i) => (<tr key={i}><td className="px-4 py-3 font-semibold">{h.symbol}</td><td className="px-4 py-3 text-right">{formatNumber(h.amount)}</td><td className="px-4 py-3 text-right font-bold">{formatNumber(h.currentValueTRY)}</td><td className={`px-4 py-3 text-right font-bold ${h.unrealizedPLPercent >= 0 ? 'text-green-500' : 'text-red-500'}`}>%{h.unrealizedPLPercent.toFixed(2)}</td></tr>))}</tbody></table></div></div>
               </div>
             </>
+          )}
+
+          {/* REBALANCE (DENGELEME) TABI */}
+          {activeTab === 'rebalance' && (
+            <div className="space-y-6">
+                <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
+                   <div className="flex justify-between items-center mb-4">
+                      <h3 className="font-bold text-lg flex items-center gap-2"><Settings size={20}/> Hedef Dağılım Ayarları (%)</h3>
+                      <button onClick={handleSaveTargets} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold shadow hover:bg-blue-700">Hedefleri Kaydet</button>
+                   </div>
+                   <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
+                      {ASSET_TYPES.map(t => (
+                         <div key={t.id}>
+                            <label className="text-xs font-bold text-slate-500 mb-1 block">{t.label}</label>
+                            <div className="relative">
+                               <input 
+                                 type="number" 
+                                 min="0" max="100"
+                                 className="w-full p-2 rounded border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 font-bold text-center"
+                                 value={targetAllocations[t.id] || 0}
+                                 onChange={e => setTargetAllocations({...targetAllocations, [t.id]: parseFloat(e.target.value) || 0})}
+                               />
+                               <span className="absolute right-2 top-2 text-slate-400 text-xs">%</span>
+                            </div>
+                         </div>
+                      ))}
+                   </div>
+                   <div className="mt-4 text-right text-sm text-slate-500">
+                      Toplam: <span className={`font-bold ${Math.abs(Object.values(targetAllocations).reduce((a,b)=>a+parseFloat(b||0),0) - 100) < 0.1 ? 'text-green-500' : 'text-red-500'}`}>
+                         {Object.values(targetAllocations).reduce((a,b)=>a+parseFloat(b||0),0)}%
+                      </span> (100% olmalı)
+                   </div>
+                </div>
+
+                <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden">
+                   <div className="p-4 border-b border-slate-100 dark:border-slate-700 flex justify-between items-center bg-slate-50 dark:bg-slate-900/50">
+                      <h2 className="font-bold text-lg flex items-center gap-2"><Scale size={20}/> Dengeleme Raporu</h2>
+                      <div className="text-sm font-mono text-slate-500">Toplam Portföy: {formatNumber(calculatedData.totalValueTRY)} TL</div>
+                   </div>
+                   <div className="overflow-x-auto">
+                      <table className="w-full text-sm text-left">
+                         <thead className="text-xs text-slate-500 uppercase bg-slate-50 dark:bg-slate-700/50">
+                            <tr>
+                               <th className="px-4 py-3">Varlık Tipi</th>
+                               <th className="px-4 py-3 text-center">Hedef %</th>
+                               <th className="px-4 py-3 text-center">Şu An %</th>
+                               <th className="px-4 py-3 text-right">Hedeflenen Değer</th>
+                               <th className="px-4 py-3 text-right">Mevcut Değer</th>
+                               <th className="px-4 py-3 text-right">Fark (Yapılması Gereken)</th>
+                            </tr>
+                         </thead>
+                         <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+                            {rebalanceData.map((item) => (
+                               <tr key={item.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                                  <td className="px-4 py-3 font-semibold">{item.label}</td>
+                                  <td className="px-4 py-3 text-center bg-blue-50 dark:bg-blue-900/20 font-medium text-blue-600">%{item.targetPct}</td>
+                                  <td className="px-4 py-3 text-center text-slate-500">%{item.currentPct.toFixed(1)}</td>
+                                  <td className="px-4 py-3 text-right text-slate-500">{formatNumber(item.targetVal)} ₺</td>
+                                  <td className="px-4 py-3 text-right font-medium">{formatNumber(item.currentVal)} ₺</td>
+                                  <td className="px-4 py-3 text-right font-bold">
+                                     {Math.abs(item.diff) < 100 ? (
+                                        <span className="text-slate-400">Dengede ✅</span>
+                                     ) : (
+                                        <span className={item.diff > 0 ? 'text-emerald-500' : 'text-red-500'}>
+                                           {item.diff > 0 ? `AL: +${formatNumber(item.diff)} ₺` : `SAT: ${formatNumber(item.diff)} ₺`}
+                                        </span>
+                                     )}
+                                  </td>
+                               </tr>
+                            ))}
+                         </tbody>
+                      </table>
+                   </div>
+                </div>
+            </div>
           )}
 
           {activeTab === 'holdings' && (
