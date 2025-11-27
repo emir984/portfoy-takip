@@ -34,12 +34,12 @@ export default function App() {
   // --- AUTH & SYSTEM STATE ---
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [pinInput, setPinInput] = useState("");
-  const [cloudPin, setCloudPin] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [cloudPin, setCloudPin] = useState(null); // Buluttaki şifre
+  const [loading, setLoading] = useState(true);   // Veri yükleniyor mu?
   const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [isRatesLoading, setIsRatesLoading] = useState(false); // Kur çekme yükleniyor durumu
+  const [isRatesLoading, setIsRatesLoading] = useState(false); // Kur çekme durumu
 
-  // --- DATA STATE ---
+  // --- DATA STATE (Buluttan Gelecek) ---
   const [transactions, setTransactions] = useState([]);
   const [rates, setRates] = useState({ USD: 32.50, EUR: 35.20, GBP: 41.10, TRY: 1 });
   const [manualPrices, setManualPrices] = useState({});
@@ -68,17 +68,20 @@ export default function App() {
 
   const fileInputRef = useRef(null);
 
-  // --- FIREBASE LISTENERS ---
+  // --- FIREBASE LISTENERS (GERÇEK ZAMANLI VERİ AKIŞI) ---
   useEffect(() => {
+    // İnternet durumunu izle
     window.addEventListener('online', () => setIsOnline(true));
     window.addEventListener('offline', () => setIsOnline(false));
 
+    // 1. İşlemleri Dinle
     const q = query(collection(db, "transactions"), orderBy("date", "desc"));
     const unsubTx = onSnapshot(q, (snapshot) => {
       const txData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setTransactions(txData);
     });
 
+    // 2. Ayarları (Kurlar, Fiyatlar, PIN) Dinle
     const unsubRates = onSnapshot(doc(db, "settings", "rates"), (doc) => {
        if (doc.exists()) setRates(doc.data());
     });
@@ -89,9 +92,9 @@ export default function App() {
        if (doc.exists()) {
          setCloudPin(doc.data().pin);
        } else {
-         setCloudPin(null);
+         setCloudPin(null); // Hiç şifre belirlenmemiş
        }
-       setLoading(false);
+       setLoading(false); // İlk veriler geldi, yükleme bitti
     });
 
     return () => {
@@ -177,22 +180,16 @@ export default function App() {
   }, [transactions, rates, manualPrices]);
 
 
-  // --- HANDLERS ---
+  // --- HANDLERS (Firebase Entegreli) ---
 
   // CANLI KUR ÇEKME (YENİ ÖZELLİK)
   const fetchLiveRates = async () => {
     setIsRatesLoading(true);
     try {
-      // Frankfurter API kullanarak canlı verileri çek (Ücretsiz, Auth gerekmez)
-      // USD -> TRY
       const usdReq = await fetch('https://api.frankfurter.app/latest?from=USD&to=TRY');
       const usdRes = await usdReq.json();
-      
-      // EUR -> TRY
       const eurReq = await fetch('https://api.frankfurter.app/latest?from=EUR&to=TRY');
       const eurRes = await eurReq.json();
-
-      // GBP -> TRY
       const gbpReq = await fetch('https://api.frankfurter.app/latest?from=GBP&to=TRY');
       const gbpRes = await gbpReq.json();
 
@@ -203,7 +200,6 @@ export default function App() {
         TRY: 1
       };
 
-      // Firebase'e kaydet
       await setDoc(doc(db, "settings", "rates"), newRates);
       alert("Kurlar başarıyla güncellendi! \nUSD: " + newRates.USD + "\nEUR: " + newRates.EUR);
     } catch (error) {
@@ -372,7 +368,7 @@ export default function App() {
         <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6">
           {activeTab === 'dashboard' && (
             <>
-              {/* Nakit Akışı & Yatırım Dengesi */}
+              {/* Nakit Akışı & Yatırım Dengesi (Akıllı Kart) */}
               <div className="bg-gradient-to-br from-slate-900 to-slate-800 dark:from-slate-800 dark:to-slate-900 p-6 rounded-2xl text-white shadow-lg mb-6 relative overflow-hidden">
                  <div className="absolute top-0 right-0 p-8 opacity-10"><PiggyBank size={120}/></div>
                  <div className="relative z-10 grid grid-cols-1 md:grid-cols-3 gap-8">
@@ -480,12 +476,3 @@ export default function App() {
     </div>
   );
 }
-```
-
-### Son Adım: Değişiklikleri Yayınla
-Kodları kopyaladıktan sonra bu değişikliğin internete (Vercel) ve telefonuna yansıması için terminalden şu komutları sırasıyla çalıştır:
-
-```bash
-git add .
-git commit -m "Canlı döviz kuru çekme eklendi"
-git push
