@@ -4,7 +4,7 @@ import { db } from './firebase';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy, setDoc } from 'firebase/firestore';
 
 import { 
-  LayoutDashboard, Wallet, ArrowRightLeft, PieChart as PieChartIcon, Settings, Search, Menu, X, Plus, Trash2, Edit2, Download, Upload, RefreshCw, TrendingUp, TrendingDown, AlertTriangle, Sparkles, Loader, DollarSign, Save, PiggyBank, ArrowDownToLine, ArrowUpFromLine, Lock, LogOut, KeyRound, ShieldCheck, Cloud, Wifi, WifiOff
+  LayoutDashboard, Wallet, ArrowRightLeft, PieChart as PieChartIcon, Settings, Search, Menu, X, Plus, Trash2, Edit2, Download, Upload, RefreshCw, TrendingUp, TrendingDown, AlertTriangle, Sparkles, Loader, DollarSign, Save, PiggyBank, ArrowDownToLine, ArrowUpFromLine, Lock, LogOut, KeyRound, ShieldCheck, Cloud, Wifi, WifiOff, Globe
 } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from 'recharts';
 
@@ -34,11 +34,12 @@ export default function App() {
   // --- AUTH & SYSTEM STATE ---
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [pinInput, setPinInput] = useState("");
-  const [cloudPin, setCloudPin] = useState(null); // Buluttaki şifre
-  const [loading, setLoading] = useState(true);   // Veri yükleniyor mu?
+  const [cloudPin, setCloudPin] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [isRatesLoading, setIsRatesLoading] = useState(false); // Kur çekme yükleniyor durumu
 
-  // --- DATA STATE (Buluttan Gelecek) ---
+  // --- DATA STATE ---
   const [transactions, setTransactions] = useState([]);
   const [rates, setRates] = useState({ USD: 32.50, EUR: 35.20, GBP: 41.10, TRY: 1 });
   const [manualPrices, setManualPrices] = useState({});
@@ -67,20 +68,17 @@ export default function App() {
 
   const fileInputRef = useRef(null);
 
-  // --- FIREBASE LISTENERS (GERÇEK ZAMANLI VERİ AKIŞI) ---
+  // --- FIREBASE LISTENERS ---
   useEffect(() => {
-    // İnternet durumunu izle
     window.addEventListener('online', () => setIsOnline(true));
     window.addEventListener('offline', () => setIsOnline(false));
 
-    // 1. İşlemleri Dinle
     const q = query(collection(db, "transactions"), orderBy("date", "desc"));
     const unsubTx = onSnapshot(q, (snapshot) => {
       const txData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setTransactions(txData);
     });
 
-    // 2. Ayarları (Kurlar, Fiyatlar, PIN) Dinle
     const unsubRates = onSnapshot(doc(db, "settings", "rates"), (doc) => {
        if (doc.exists()) setRates(doc.data());
     });
@@ -91,9 +89,9 @@ export default function App() {
        if (doc.exists()) {
          setCloudPin(doc.data().pin);
        } else {
-         setCloudPin(null); // Hiç şifre belirlenmemiş
+         setCloudPin(null);
        }
-       setLoading(false); // İlk veriler geldi, yükleme bitti
+       setLoading(false);
     });
 
     return () => {
@@ -179,7 +177,42 @@ export default function App() {
   }, [transactions, rates, manualPrices]);
 
 
-  // --- HANDLERS (Firebase Entegreli) ---
+  // --- HANDLERS ---
+
+  // CANLI KUR ÇEKME (YENİ ÖZELLİK)
+  const fetchLiveRates = async () => {
+    setIsRatesLoading(true);
+    try {
+      // Frankfurter API kullanarak canlı verileri çek (Ücretsiz, Auth gerekmez)
+      // USD -> TRY
+      const usdReq = await fetch('https://api.frankfurter.app/latest?from=USD&to=TRY');
+      const usdRes = await usdReq.json();
+      
+      // EUR -> TRY
+      const eurReq = await fetch('https://api.frankfurter.app/latest?from=EUR&to=TRY');
+      const eurRes = await eurReq.json();
+
+      // GBP -> TRY
+      const gbpReq = await fetch('https://api.frankfurter.app/latest?from=GBP&to=TRY');
+      const gbpRes = await gbpReq.json();
+
+      const newRates = {
+        USD: usdRes.rates.TRY,
+        EUR: eurRes.rates.TRY,
+        GBP: gbpRes.rates.TRY,
+        TRY: 1
+      };
+
+      // Firebase'e kaydet
+      await setDoc(doc(db, "settings", "rates"), newRates);
+      alert("Kurlar başarıyla güncellendi! \nUSD: " + newRates.USD + "\nEUR: " + newRates.EUR);
+    } catch (error) {
+      console.error("Kur hatası:", error);
+      alert("Kurlar çekilemedi. İnternet bağlantınızı kontrol edin.");
+    } finally {
+      setIsRatesLoading(false);
+    }
+  };
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -339,7 +372,7 @@ export default function App() {
         <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6">
           {activeTab === 'dashboard' && (
             <>
-              {/* Nakit Akışı & Yatırım Dengesi (Akıllı Kart) */}
+              {/* Nakit Akışı & Yatırım Dengesi */}
               <div className="bg-gradient-to-br from-slate-900 to-slate-800 dark:from-slate-800 dark:to-slate-900 p-6 rounded-2xl text-white shadow-lg mb-6 relative overflow-hidden">
                  <div className="absolute top-0 right-0 p-8 opacity-10"><PiggyBank size={120}/></div>
                  <div className="relative z-10 grid grid-cols-1 md:grid-cols-3 gap-8">
@@ -414,7 +447,16 @@ export default function App() {
            <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden">
              <div className="p-4 border-b flex justify-between items-center"><h2 className="font-bold flex gap-2"><Settings /> Ayarlar</h2><button onClick={() => setIsSettingsOpen(false)}><X /></button></div>
              <div className="p-6 space-y-6">
-                <div><h3 className="text-sm font-bold mb-2 flex gap-2"><DollarSign size={16}/> Kurlar (Bulut)</h3><div className="grid grid-cols-3 gap-2">{['USD', 'EUR', 'GBP'].map(c => (<div key={c}><label className="text-xs text-slate-500">{c}</label><input type="number" step="0.01" className="w-full p-1 border rounded text-sm dark:bg-slate-700" value={rates[c]} onChange={e => handleRateChange(c, e.target.value)} /></div>))}</div></div>
+                <div>
+                  <h3 className="text-sm font-bold mb-2 flex gap-2 items-center"><Globe size={16}/> Kurlar (Bulut)</h3>
+                  <div className="grid grid-cols-3 gap-2 mb-3">
+                    {['USD', 'EUR', 'GBP'].map(c => (<div key={c}><label className="text-xs text-slate-500">{c}</label><input type="number" step="0.01" className="w-full p-1 border rounded text-sm dark:bg-slate-700" value={rates[c]} onChange={e => handleRateChange(c, e.target.value)} /></div>))}
+                  </div>
+                  <button onClick={fetchLiveRates} disabled={isRatesLoading} className="w-full py-2 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-lg text-sm font-bold flex items-center justify-center gap-2 hover:bg-indigo-100 transition-colors">
+                    {isRatesLoading ? <Loader className="animate-spin" size={16}/> : <RefreshCw size={16}/>}
+                    Kurları İnternetten Güncelle
+                  </button>
+                </div>
                 <hr className="dark:border-slate-700"/>
                 <div>
                    <h3 className="text-sm font-bold mb-2 flex gap-2"><KeyRound size={16}/> Şifre Değiştir</h3>
@@ -438,3 +480,12 @@ export default function App() {
     </div>
   );
 }
+```
+
+### Son Adım: Değişiklikleri Yayınla
+Kodları kopyaladıktan sonra bu değişikliğin internete (Vercel) ve telefonuna yansıması için terminalden şu komutları sırasıyla çalıştır:
+
+```bash
+git add .
+git commit -m "Canlı döviz kuru çekme eklendi"
+git push
